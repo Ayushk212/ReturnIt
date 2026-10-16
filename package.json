@@ -4,8 +4,9 @@
   "private": true,
   "description": "ReturnIt — Lost & Found Web Platform",
   "workspaces": [
-    "packages/*",
-    "apps/*"
+    "shared",
+    "backend",
+    "frontend"
   ],
   "scripts": {
     "dev": "npm run dev --workspaces --if-present",
@@ -16,8 +17,8 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "db:up": "docker compose up -d mongo",
     "mongo:dev": "node scripts/dev-mongo.mjs",
-    "api:dev": "npm run dev --workspace=@returnit/api",
-    "web:dev": "npm run dev --workspace=@returnit/web"
+    "api:dev": "npm run dev -w backend",
+    "web:dev": "npm run dev -w frontend"
   },
   "overrides": {
     "tinypool": "^2.2.0",

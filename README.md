@@ -29,31 +29,31 @@ Built with a modern TypeScript monorepo architecture, ReturnIt provides an organ
 The project is structured as an npm workspaces monorepo:
 
 ```text
-Lost&Found/
-├── apps/
-│   ├── api/                     # Express + TypeScript REST API
-│   │   ├── src/
-│   │   │   ├── config/          # Environment validation, MongoDB connection, Firebase Admin SDK
-│   │   │   ├── middleware/      # Firebase auth token verification, rate limiting, security headers, error handler
-│   │   │   ├── models/          # Mongoose models (User, Item, Claim, Report)
-│   │   │   ├── routes/          # API route definitions (/items, /claims, /users, /auth)
-│   │   │   └── utils/           # Custom AppError, async handler
-│   │   └── tests/               # Vitest integration tests for auth, security, and API contracts
-│   └── web/                     # React 18 + Vite SPA
-│       ├── src/
-│       │   ├── components/      # UI components (Navbar, ItemCard, ItemImage, EmptyState, etc.)
-│       │   ├── context/         # AuthContext (Firebase Client SDK + dev fallback)
-│       │   ├── lib/             # API client, types, constants, session management, mock data
-│       │   ├── pages/           # Landing, Dashboard, ItemDetail, PostItem, Profile, SignIn, Safety
-│       │   └── styles/          # Tailwind CSS styling and theme tokens
-│       └── tests/               # Web client smoke and validator tests
-├── packages/
-│   └── shared/                  # Shared Zod schemas, TypeScript types, and enums
+ReturnIt/
+├── frontend/                # React 18 + Vite SPA
+│   ├── src/
+│   │   ├── components/      # UI components (Navbar, ItemCard, ItemImage, EmptyState, etc.)
+│   │   ├── context/         # AuthContext (Firebase Client SDK + dev fallback)
+│   │   ├── lib/             # API client, types, constants, session management, mock data
+│   │   ├── pages/           # Landing, Dashboard, ItemDetail, PostItem, Profile, SignIn, Safety
+│   │   └── styles/          # Tailwind CSS styling and theme tokens
+│   └── tests/               # Web client smoke and validator tests
+├── backend/                 # Express + TypeScript REST API
+│   ├── src/
+│   │   ├── config/          # Environment validation, MongoDB connection, Firebase Admin SDK
+│   │   ├── middleware/      # Firebase auth token verification, rate limiting, security headers, error handler
+│   │   ├── models/          # Mongoose models (User, Item, Claim, Report)
+│   │   ├── routes/          # API route definitions (/items, /claims, /users, /auth)
+│   │   └── utils/           # Custom AppError, async handler
+│   └── tests/               # Vitest integration tests for auth, security, and API contracts
+├── shared/                  # Shared Zod schemas, TypeScript types, and enums
+├── docs/
+│   └── screenshots/         # Application preview screenshots
 ├── scripts/
-│   └── dev-mongo.mjs            # In-memory single-node MongoDB replica set runner
-├── .env.example                 # Documented environment variable template
-├── eslint.config.mjs            # Flat ESLint configuration
-└── package.json                 # Monorepo root workspace configuration
+│   └── dev-mongo.mjs        # In-memory single-node MongoDB replica set runner
+├── .env.example             # Documented environment variable template
+├── eslint.config.mjs        # Flat ESLint configuration
+└── package.json             # Monorepo root workspace configuration
 ```
 
 ---
@@ -95,20 +95,20 @@ Copy the example environment files:
 # Root API environment
 cp .env.example .env
 
-# Web client environment
-cp apps/web/.env.example apps/web/.env.local   # or create apps/web/.env.local
+# Frontend environment
+cp frontend/.env.example frontend/.env.local   # or create frontend/.env.local
 ```
 
 For frontend testing with built-in mock campus data:
 ```env
-# apps/web/.env.local
+# frontend/.env.local
 VITE_USE_MOCK=true
 VITE_API_URL=http://localhost:5000/api
 ```
 
 For live backend integration with Firebase Auth:
 ```env
-# apps/web/.env.local
+# frontend/.env.local
 VITE_USE_MOCK=false
 VITE_API_URL=http://localhost:5000/api
 VITE_FIREBASE_API_KEY=your_firebase_api_key

@@ -35,7 +35,7 @@ export default [
     },
   },
   {
-    files: ['apps/**/src/**/*.ts', 'apps/**/src/**/*.tsx', 'packages/**/src/**/*.ts'],
+    files: ['frontend/src/**/*.ts', 'frontend/src/**/*.tsx', 'backend/src/**/*.ts', 'shared/src/**/*.ts'],
     rules: {
       'no-console': 'error',
     },
