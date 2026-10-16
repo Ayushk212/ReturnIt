@@ -1,0 +1,16 @@
+node_modules
+dist
+build
+coverage
+.git
+*.log
+.env
+.env.*
+!.env.example
+package-lock.json
+playwright-report
+test-results
+.turbo
+*.min.js
+*.map
+public/uploads
