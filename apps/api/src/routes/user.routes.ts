@@ -6,7 +6,6 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { AppError } from '../utils/AppError.js';
 import { User } from '../models/User.js';
 import { Item } from '../models/Item.js';
-import { RefreshToken } from '../models/RefreshToken.js';
 import { UpdateProfileSchema, PublicUserProfile } from '@returnit/shared';
 
 const router = Router();
@@ -76,12 +75,8 @@ router.delete(
     user.email = `deleted-${user._id}-${randomizedSuffix}@returnit.local`;
     user.phone = undefined;
     user.bio = '';
-    user.avatarUrl = undefined;
+    user.firebaseUid = `deleted-${user._id}-${randomizedSuffix}`;
     await user.save();
-
-    // Revoke all active sessions
-    await RefreshToken.updateMany({ userId: user._id }, { revokedAt: new Date() });
-    res.clearCookie('refreshToken', { path: '/api/auth' });
 
     res.status(200).json({ message: 'Account successfully anonymized and deleted' });
   }),

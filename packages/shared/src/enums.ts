@@ -24,7 +24,7 @@ export const ItemCategory = {
   KEYS: 'keys',
   JEWELRY: 'jewelry',
   CLOTHING: 'clothing',
-  PETS: 'pets',
+  BOOKS: 'books',
   OTHER: 'other',
 } as const;
 export type ItemCategory = (typeof ItemCategory)[keyof typeof ItemCategory];

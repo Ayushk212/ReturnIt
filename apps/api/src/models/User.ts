@@ -3,25 +3,26 @@ import { UserRole, UserStatus } from '@returnit/shared';
 
 export interface IUser extends Document {
   _id: Types.ObjectId;
+  firebaseUid: string;
   name: string;
   email: string;
-  passwordHash: string;
   phone?: string;
   bio?: string;
   avatarUrl?: string;
   role: UserRole;
   status: UserStatus;
   trustScore: number;
+  savedItems: Types.ObjectId[];
   createdAt: Date;
   updatedAt: Date;
 }
 
 const UserSchema = new Schema<IUser>(
   {
-    name: { type: String, required: true, trim: true, minlength: 2, maxlength: 100 },
+    firebaseUid: { type: String, required: true, unique: true, index: true },
+    name: { type: String, required: true, trim: true, minlength: 1, maxlength: 100 },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true, index: true },
-    passwordHash: { type: String, required: true },
-    phone: { type: String, trim: true, select: false }, // Never selected by default
+    phone: { type: String, trim: true, select: false },
     bio: { type: String, trim: true, maxlength: 500, default: '' },
     avatarUrl: { type: String, trim: true },
     role: {
@@ -37,6 +38,7 @@ const UserSchema = new Schema<IUser>(
       index: true,
     },
     trustScore: { type: Number, default: 10, min: 0, max: 100 },
+    savedItems: [{ type: Schema.Types.ObjectId, ref: 'Item' }],
   },
   {
     timestamps: true,

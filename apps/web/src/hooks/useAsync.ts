@@ -22,7 +22,6 @@ export function useAsync<T>(fn: (signal: AbortSignal) => Promise<T>, deps: reado
         setState({ data: null, error: e instanceof Error ? e.message : 'Something went wrong.', loading: false });
       });
     return () => controller.abort();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, tick]);
 
   return { ...state, reload: () => setTick((t) => t + 1) };

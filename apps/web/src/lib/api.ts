@@ -182,7 +182,7 @@ const mockApi: Api = {
 
   async listSaved() {
     await sleep(250);
-    const me = currentUid();
+    currentUid();
     const store = load();
     return store.items.filter((i) => store.saved.includes(i.id)).map((i) => toItem(i, store));
   },

@@ -46,7 +46,6 @@ export default function Dashboard() {
     if (search.trim() === q) return undefined;
     const timer = window.setTimeout(() => setParam('q', search.trim()), 300);
     return () => window.clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
 
   const { data, loading, error, reload } = useAsync(

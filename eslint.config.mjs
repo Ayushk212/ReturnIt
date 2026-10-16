@@ -12,6 +12,7 @@ export default [
       '**/playwright-report/**',
       '**/test-results/**',
       '**/*.min.js',
+      'src/**',
     ],
   },
   {

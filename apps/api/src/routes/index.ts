@@ -2,6 +2,8 @@ import { Router, Request, Response } from 'express';
 import mongoose from 'mongoose';
 import authRoutes from './auth.routes.js';
 import userRoutes from './user.routes.js';
+import itemRoutes from './item.routes.js';
+import claimRoutes from './claim.routes.js';
 
 const router = Router();
 
@@ -23,5 +25,7 @@ router.get('/ready', (_req: Request, res: Response) => {
 // Mounted API routes
 router.use('/auth', authRoutes);
 router.use('/users', userRoutes);
+router.use('/items', itemRoutes);
+router.use('/claims', claimRoutes);
 
 export default router;

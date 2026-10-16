@@ -14,7 +14,10 @@
     "test": "npm run test --workspaces --if-present",
     "e2e": "playwright test",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "db:up": "docker compose up -d mongo"
+    "db:up": "docker compose up -d mongo",
+    "mongo:dev": "node scripts/dev-mongo.mjs",
+    "api:dev": "npm run dev --workspace=@returnit/api",
+    "web:dev": "npm run dev --workspace=@returnit/web"
   },
   "overrides": {
     "tinypool": "^2.2.0",
