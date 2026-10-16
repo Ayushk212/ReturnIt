@@ -10,10 +10,15 @@
   "scripts": {
     "dev": "npm run dev --workspaces --if-present",
     "build": "npm run build --workspaces --if-present",
-    "lint": "eslint . --ext .ts,.tsx",
+    "lint": "eslint .",
     "test": "npm run test --workspaces --if-present",
     "e2e": "playwright test",
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "db:up": "docker compose up -d mongo"
+  },
+  "overrides": {
+    "tinypool": "^2.2.0",
+    "braces": "^3.0.3"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.25.0",

@@ -5,6 +5,7 @@ services:
     image: mongo:7.0
     container_name: returnit-mongo
     restart: unless-stopped
+    command: ["--replSet", "rs0", "--bind_ip_all"]
     ports:
       - '27017:27017'
     environment:
@@ -12,10 +13,12 @@ services:
     volumes:
       - mongo-data:/data/db
     healthcheck:
-      test: ['CMD', 'mongosh', '--eval', 'db.adminCommand("ping")']
+      test: >
+        mongosh --quiet --eval "try { rs.status().ok } catch(e) { rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'localhost:27017' }] }).ok }"
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
 
   api:
     build:
@@ -31,7 +34,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 5000
-      MONGODB_URI: mongodb://mongo:27017/returnit
+      MONGODB_URI: mongodb://mongo:27017/returnit?replicaSet=rs0
       CORS_ORIGIN: http://localhost:5173
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-changeme_in_production_access_secret}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-changeme_in_production_refresh_secret}
