@@ -31,7 +31,7 @@ function build(s: Seed): StoredItem {
     dateOccurred: ago(s.occurredHoursAgo),
     createdAt: ago(s.postedHoursAgo),
     images: [],
-    owner: { name: s.ownerName },
+    owner: { id: `seed-${s.id}`, name: s.ownerName },
     ownerId: `seed-${s.id}`,
     isOwner: false,
     saved: false,

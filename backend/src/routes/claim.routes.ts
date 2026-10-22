@@ -2,190 +2,72 @@ import { Router, Request, Response } from 'express';
 import { authenticate } from '../middleware/auth.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { AppError } from '../utils/AppError.js';
-import { Claim } from '../models/Claim.js';
-import { Item, IItem } from '../models/Item.js';
-import { ClaimStatus, ItemStatus } from '@returnit/shared';
-import { formatClaim } from './item.routes.js';
+import { uuidParam } from '../utils/http.js';
+import { Claim, ClaimConflict, IClaim } from '../models/Claim.js';
+import { formatClaim } from './format.js';
 
 const router = Router();
 
-function extractEntityId(entity: unknown): string {
-  if (!entity) return '';
-  if (typeof entity === 'object' && entity !== null && '_id' in entity) {
-    const id = (entity as { _id: unknown })._id;
-    return id ? String(id) : '';
-  }
-  return String(entity);
-}
-
-// GET /api/claims
+// GET /api/claims — requests sent and received by the signed-in user
 router.get(
   '/',
   authenticate,
   asyncHandler(async (req: Request, res: Response) => {
-    const currentUserId = req.user!._id;
-
-    // Find items owned by current user
-    const userItems = await Item.find({ owner: currentUserId }).select('_id');
-    const userItemIds = userItems.map((i) => i._id);
-
-    // Find claims where user is claimant OR item belongs to user
-    const claims = await Claim.find({
-      $or: [{ claimant: currentUserId }, { item: { $in: userItemIds } }],
-    })
-      .sort({ createdAt: -1 })
-      .populate('claimant', 'name email')
-      .populate({
-        path: 'item',
-        populate: { path: 'owner', select: 'name email' },
-      })
-      .exec();
-
-    const formatted = claims.map((c) => formatClaim(c, currentUserId.toString()));
-
-    res.status(200).json({ claims: formatted });
+    const claims = await Claim.findByUser(req.user!.id);
+    res.json({ claims: claims.map((c) => formatClaim(c, req.user!.id)) });
   }),
 );
 
-// POST /api/claims/:id/approve
+async function loadClaim(req: Request): Promise<IClaim> {
+  const claim = await Claim.findById(String(req.params.id));
+  if (!claim) throw AppError.notFound('Request not found');
+  return claim;
+}
+
+function requireOwner(req: Request, claim: IClaim, action: string): void {
+  if (claim.itemOwnerId !== req.user!.id) throw AppError.forbidden(`Only the listing owner can ${action} requests`);
+}
+
+function handled(updated: IClaim | null): IClaim {
+  if (!updated) throw AppError.conflict('This request has already been handled');
+  return updated;
+}
+
 router.post(
   '/:id/approve',
+  uuidParam('id', 'request'),
   authenticate,
   asyncHandler(async (req: Request, res: Response) => {
-    const claim = await Claim.findById(req.params.id)
-      .populate('claimant', 'name email')
-      .populate({
-        path: 'item',
-        populate: { path: 'owner', select: 'name email' },
-      })
-      .exec();
-
-    if (!claim) {
-      throw AppError.notFound('Request not found');
+    const claim = await loadClaim(req);
+    requireOwner(req, claim, 'approve');
+    try {
+      res.json(formatClaim(handled(await Claim.approve(claim.id, req.user!.id)), req.user!.id));
+    } catch (err) {
+      if (err instanceof ClaimConflict) throw AppError.conflict(err.message);
+      throw err;
     }
-
-    const item = claim.item as unknown as IItem;
-    if (!item) {
-      throw AppError.notFound('Associated listing not found');
-    }
-
-    const ownerId = extractEntityId(item.owner);
-    if (ownerId !== req.user!._id.toString()) {
-      throw AppError.forbidden('Only the listing owner can approve requests');
-    }
-
-    if (claim.status !== ClaimStatus.PENDING) {
-      throw AppError.conflict('This request has already been handled');
-    }
-
-    claim.status = ClaimStatus.APPROVED;
-    claim.decidedAt = new Date();
-    await claim.save();
-
-    item.status = ItemStatus.RESOLVED;
-    await (item as unknown as { save(): Promise<void> }).save();
-
-    // Reject other pending claims on this item
-    await Claim.updateMany(
-      { item: item._id, _id: { $ne: claim._id }, status: ClaimStatus.PENDING },
-      { status: ClaimStatus.REJECTED, decidedAt: new Date() },
-    );
-
-    res.status(200).json(formatClaim(claim, req.user!._id.toString()));
   }),
 );
 
-// POST /api/claims/:id/reject
 router.post(
   '/:id/reject',
+  uuidParam('id', 'request'),
   authenticate,
   asyncHandler(async (req: Request, res: Response) => {
-    const claim = await Claim.findById(req.params.id)
-      .populate('claimant', 'name email')
-      .populate({
-        path: 'item',
-        populate: { path: 'owner', select: 'name email' },
-      })
-      .exec();
-
-    if (!claim) {
-      throw AppError.notFound('Request not found');
-    }
-
-    const item = claim.item as unknown as IItem;
-    if (!item) {
-      throw AppError.notFound('Associated listing not found');
-    }
-
-    const ownerId = extractEntityId(item.owner);
-    if (ownerId !== req.user!._id.toString()) {
-      throw AppError.forbidden('Only the listing owner can reject requests');
-    }
-
-    if (claim.status !== ClaimStatus.PENDING) {
-      throw AppError.conflict('This request has already been handled');
-    }
-
-    claim.status = ClaimStatus.REJECTED;
-    claim.decidedAt = new Date();
-    await claim.save();
-
-    const pendingCount = await Claim.countDocuments({
-      item: item._id,
-      status: ClaimStatus.PENDING,
-    });
-    if (pendingCount === 0 && item.status === ItemStatus.CLAIM_PENDING) {
-      item.status = ItemStatus.OPEN;
-      await (item as unknown as { save(): Promise<void> }).save();
-    }
-
-    res.status(200).json(formatClaim(claim, req.user!._id.toString()));
+    const claim = await loadClaim(req);
+    requireOwner(req, claim, 'decline');
+    res.json(formatClaim(handled(await Claim.reject(claim.id, req.user!.id)), req.user!.id));
   }),
 );
 
-// POST /api/claims/:id/withdraw
 router.post(
   '/:id/withdraw',
+  uuidParam('id', 'request'),
   authenticate,
   asyncHandler(async (req: Request, res: Response) => {
-    const claim = await Claim.findById(req.params.id)
-      .populate('claimant', 'name email')
-      .populate({
-        path: 'item',
-        populate: { path: 'owner', select: 'name email' },
-      })
-      .exec();
-
-    if (!claim) {
-      throw AppError.notFound('Request not found');
-    }
-
-    const claimantId = extractEntityId(claim.claimant);
-    if (claimantId !== req.user!._id.toString()) {
-      throw AppError.forbidden('Only the requester can withdraw this request');
-    }
-
-    if (claim.status !== ClaimStatus.PENDING) {
-      throw AppError.conflict('This request has already been handled');
-    }
-
-    claim.status = ClaimStatus.WITHDRAWN;
-    claim.decidedAt = new Date();
-    await claim.save();
-
-    const item = claim.item as unknown as IItem;
-    if (item) {
-      const pendingCount = await Claim.countDocuments({
-        item: item._id,
-        status: ClaimStatus.PENDING,
-      });
-      if (pendingCount === 0 && item.status === ItemStatus.CLAIM_PENDING) {
-        item.status = ItemStatus.OPEN;
-        await (item as unknown as { save(): Promise<void> }).save();
-      }
-    }
-
-    res.status(200).json(formatClaim(claim, req.user!._id.toString()));
+    const claim = await loadClaim(req);
+    if (claim.claimantId !== req.user!.id) throw AppError.forbidden('Only the requester can withdraw this request');
+    res.json(formatClaim(handled(await Claim.withdraw(claim.id, req.user!.id)), req.user!.id));
   }),
 );
 

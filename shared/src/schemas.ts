@@ -142,8 +142,9 @@ export const DecideClaimSchema = z.object({
 
 // Chat Schemas
 export const CreateConversationSchema = z.object({
-  itemId: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid item ID format'),
-  participantId: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid user ID format'),
+  itemId: z.string().uuid('Invalid item ID format'),
+  /** Required only when the listing owner starts a conversation with a requester. */
+  participantId: z.string().uuid('Invalid user ID format').optional(),
 });
 
 export const SendMessageSchema = z.object({
@@ -154,7 +155,7 @@ export const SendMessageSchema = z.object({
 // Report Schemas
 export const CreateReportSchema = z.object({
   targetType: z.nativeEnum(ReportTargetType),
-  targetId: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid target ID format'),
+  targetId: z.string().uuid('Invalid target ID format'),
   reason: z.nativeEnum(ReportReason),
   details: z.string().trim().min(10).max(1000),
 });

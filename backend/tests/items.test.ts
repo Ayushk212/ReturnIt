@@ -1,222 +1,160 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import request from 'supertest';
-import { MongoMemoryReplSet } from 'mongodb-memory-server';
-import mongoose from 'mongoose';
-import { ItemCategory, ItemStatus } from '@returnit/shared';
+import sharp from 'sharp';
+import { samplePng, startHarness, type Harness } from './harness.js';
 
-// Mock Firebase Admin Auth before importing app
-vi.mock('../src/config/firebase.js', () => {
-  return {
-    getFirebaseAdmin: vi.fn(),
-    getFirebaseAuth: () => ({
-      verifyIdToken: vi.fn(async (token: string) => {
-        if (token.startsWith('user_')) {
-          const name = token.replace('user_', '');
-          return {
-            uid: `uid-${name}`,
-            email: `${name}@mnnit.ac.in`,
-            email_verified: true,
-            name: `${name.charAt(0).toUpperCase() + name.slice(1)} Person`,
-          };
-        }
-        return {
-          uid: 'uid-default',
-          email: 'default@mnnit.ac.in',
-          email_verified: true,
-          name: 'Default User',
-        };
-      }),
-    }),
-  };
+let h: Harness;
+let finder: { id: string; token: string };
+let owner: { id: string; token: string };
+let stranger: { id: string; token: string };
+
+const auth = (t: { token: string }) => ({ Authorization: `Bearer ${t.token}` });
+
+function postItem(user: { token: string }, fields: Record<string, string>, photos: Buffer[] = [], key?: string) {
+  const req = request(h.app).post('/api/items').set(auth(user));
+  if (key) req.set('Idempotency-Key', key);
+  for (const [k, v] of Object.entries(fields)) req.field(k, v);
+  photos.forEach((p, i) => req.attach('images', p, { filename: `photo-${i}.png`, contentType: 'image/png' }));
+  return req;
+}
+
+const FOUND_WALLET = {
+  type: 'found',
+  title: 'Black leather wallet',
+  description: 'Plain black wallet found on a reading table near the window.',
+  category: 'wallets-bags',
+  locationLabel: 'Central Library',
+  dateOccurred: new Date(Date.now() - 3600_000).toISOString(),
+  verificationQuestion: 'Which department is printed on the ID card?',
+  verificationAnswer: 'Civil',
+};
+
+beforeAll(async () => {
+  h = await startHarness();
+  finder = await h.createAuthUser({ email: 'finder@mnnit.ac.in', name: 'Riya Finder' });
+  owner = await h.createAuthUser({ email: 'owner@mnnit.ac.in', name: 'Aman Owner' });
+  stranger = await h.createAuthUser({ email: 'stranger@mnnit.ac.in' });
+  // First authenticated call creates each application user.
+  for (const u of [finder, owner, stranger]) await request(h.app).get('/api/auth/me').set(auth(u));
+});
+afterAll(async () => {
+  await h.close();
 });
 
-import { createApp } from '../src/app.js';
+describe('Listings and photos', () => {
+  let itemId: string;
 
-describe('Items & Claims API Contract Tests', () => {
-  let replSet: MongoMemoryReplSet;
-  let app: ReturnType<typeof createApp>;
+  it('creates a listing and compresses photos to WebP', async () => {
+    const original = await samplePng(3000, 2000);
+    const res = await postItem(finder, FOUND_WALLET, [original]);
+    expect(res.status).toBe(201);
+    itemId = res.body.id;
+    expect(res.body.images).toHaveLength(1);
+    expect(res.body.images[0]).toMatchObject({ width: 1600, height: 1067 });
+    expect(JSON.stringify(res.body)).not.toContain('data:image');
+    expect(res.body).not.toHaveProperty('verificationAnswer');
+    expect(JSON.stringify(res.body)).not.toContain('Civil');
 
-  beforeAll(async () => {
-    process.env.NODE_ENV = 'test';
-    process.env.MONGODB_URI = 'mongodb://localhost:27017/test';
+    const full = await request(h.app).get(`/api/items/${itemId}/photos/0`).buffer(true).parse((r, cb) => {
+      const chunks: Buffer[] = [];
+      r.on('data', (c: Buffer) => chunks.push(c));
+      r.on('end', () => cb(null, Buffer.concat(chunks)));
+    });
+    expect(full.status).toBe(200);
+    expect(full.headers['content-type']).toBe('image/webp');
+    expect(full.headers['cross-origin-resource-policy']).toBe('cross-origin');
+    const meta = await sharp(full.body as Buffer).metadata();
+    expect(meta.format).toBe('webp');
+    expect(meta.width).toBe(1600);
 
-    replSet = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
-    const uri = replSet.getUri();
-    await mongoose.connect(uri);
-
-    app = createApp();
-  }, 60000);
-
-  afterAll(async () => {
-    await mongoose.disconnect();
-    if (replSet) {
-      await replSet.stop();
-    }
+    const thumb = await request(h.app).get(`/api/items/${itemId}/photos/0?size=thumb`);
+    expect(thumb.status).toBe(200);
+    expect(Number(thumb.headers['content-length'])).toBeLessThan(Number(full.headers['content-length']));
   });
 
-  beforeEach(async () => {
-    const collections = mongoose.connection.collections;
-    for (const key in collections) {
-      await collections[key].deleteMany({});
-    }
+  it('rejects files that are not real images', async () => {
+    const res = await postItem(finder, FOUND_WALLET, [Buffer.from('definitely not a png')]);
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('INVALID_IMAGE');
   });
 
-  it('allows public GET /items and returns { items } matching web Item contract', async () => {
-    // Create an item via API by user_alice
-    const createRes = await request(app)
-      .post('/api/items')
-      .set('Authorization', 'Bearer user_alice')
-      .field('type', 'found')
-      .field('title', 'Blue Water Bottle')
-      .field('description', 'Found near Central Library reading hall')
-      .field('category', ItemCategory.OTHER)
-      .field('locationLabel', 'Central Library')
-      .field('dateOccurred', new Date().toISOString())
-      .field('verificationQuestion', 'What brand is it?')
-      .field('verificationAnswer', 'Milton');
-
-    expect(createRes.status).toBe(201);
-    expect(createRes.body.id).toBeDefined();
-    expect(createRes.body._id).toBeUndefined();
-    expect(createRes.body.owner).toEqual({ name: 'Alice Person' });
-    expect(createRes.body.owner.email).toBeUndefined();
-    expect(createRes.body.isOwner).toBe(true);
-    expect(createRes.body.saved).toBe(false);
-    expect(createRes.body.locationLabel).toBe('Central Library');
-    expect(createRes.body.verificationQuestion).toBe('What brand is it?');
-    expect(createRes.body.verificationAnswer).toBeUndefined();
-    expect(createRes.body.verificationAnswerHash).toBeUndefined();
-
-    const itemId = createRes.body.id;
-
-    // Public GET without auth token
-    const publicRes = await request(app).get('/api/items');
-    expect(publicRes.status).toBe(200);
-    expect(Array.isArray(publicRes.body.items)).toBe(true);
-    expect(publicRes.body.items.length).toBe(1);
-
-    const publicItem = publicRes.body.items[0];
-    expect(publicItem.id).toBe(itemId);
-    expect(publicItem._id).toBeUndefined();
-    expect(publicItem.owner).toEqual({ name: 'Alice Person' });
-    expect(publicItem.isOwner).toBe(false);
-    expect(publicItem.saved).toBe(false);
-    expect(publicItem.verificationAnswer).toBeUndefined();
+  it('shows other members’ listings on the board when signed in (regression)', async () => {
+    const asOwner = await request(h.app).get('/api/items').set(auth(owner));
+    expect(asOwner.body.items.map((i: { id: string }) => i.id)).toContain(itemId);
+    const anonymous = await request(h.app).get('/api/items');
+    expect(anonymous.body.items.map((i: { id: string }) => i.id)).toContain(itemId);
+    const mine = await request(h.app).get('/api/items?mine=true').set(auth(owner));
+    expect(mine.body.items).toHaveLength(0);
   });
 
-  it('toggles saved status on POST /items/:id/save and filters with ?saved=true', async () => {
-    // Alice creates item
-    const createRes = await request(app)
-      .post('/api/items')
-      .set('Authorization', 'Bearer user_alice')
-      .field('type', 'lost')
-      .field('title', 'Calculator Casio fx-991EX')
-      .field('description', 'Lost in Computer Center Lab 2')
-      .field('category', ItemCategory.ELECTRONICS)
-      .field('locationLabel', 'Computer Science Dept.')
-      .field('dateOccurred', new Date().toISOString());
-
-    const itemId = createRes.body.id;
-
-    // Bob saves Alice's item
-    const saveRes1 = await request(app)
-      .post(`/api/items/${itemId}/save`)
-      .set('Authorization', 'Bearer user_bob');
-    expect(saveRes1.status).toBe(200);
-    expect(saveRes1.body.saved).toBe(true);
-
-    // Bob checks list of saved items
-    const savedListRes = await request(app)
-      .get('/api/items?saved=true')
-      .set('Authorization', 'Bearer user_bob');
-    expect(savedListRes.status).toBe(200);
-    expect(savedListRes.body.items.length).toBe(1);
-    expect(savedListRes.body.items[0].id).toBe(itemId);
-    expect(savedListRes.body.items[0].saved).toBe(true);
-    expect(savedListRes.body.items[0].isOwner).toBe(false);
-
-    // Bob un-saves
-    const saveRes2 = await request(app)
-      .post(`/api/items/${itemId}/save`)
-      .set('Authorization', 'Bearer user_bob');
-    expect(saveRes2.status).toBe(200);
-    expect(saveRes2.body.saved).toBe(false);
-
-    // List is now empty
-    const savedListRes2 = await request(app)
-      .get('/api/items?saved=true')
-      .set('Authorization', 'Bearer user_bob');
-    expect(savedListRes2.status).toBe(200);
-    expect(savedListRes2.body.items.length).toBe(0);
+  it('filters by type, category and keyword', async () => {
+    const byType = await request(h.app).get('/api/items?type=lost');
+    expect(byType.body.items).toHaveLength(0);
+    const byQuery = await request(h.app).get('/api/items?q=leather&category=wallets-bags');
+    expect(byQuery.body.items).toHaveLength(1);
+    const wildcard = await request(h.app).get('/api/items?q=%25');
+    expect(wildcard.body.items).toHaveLength(0);
   });
 
-  it('handles claim workflow: submit claim, list claims, approve claim, reveal contacts', async () => {
-    // Alice posts found keys
-    const createRes = await request(app)
-      .post('/api/items')
-      .set('Authorization', 'Bearer user_alice')
-      .field('type', 'found')
-      .field('title', 'Motorcycle key with red keychain')
-      .field('description', 'Found at Canteen table')
-      .field('category', ItemCategory.KEYS)
-      .field('locationLabel', 'Canteen / Mess')
-      .field('dateOccurred', new Date().toISOString());
+  it('returns 404 for malformed and unknown ids instead of a server error', async () => {
+    expect((await request(h.app).get('/api/items/not-a-uuid')).status).toBe(404);
+    expect((await request(h.app).get('/api/items/5b1d2c9e-7f0a-4c55-9d1e-2a3b4c5d6e7f')).status).toBe(404);
+    expect((await request(h.app).get('/api/users/123')).status).toBe(404);
+  });
 
-    const itemId = createRes.body.id;
+  it('deduplicates retried submissions with the same idempotency key', async () => {
+    const a = await postItem(owner, { ...FOUND_WALLET, type: 'lost', title: 'Grey laptop charger' }, [], 'key-1');
+    const b = await postItem(owner, { ...FOUND_WALLET, type: 'lost', title: 'Grey laptop charger' }, [], 'key-1');
+    expect(a.status).toBe(201);
+    expect(b.status).toBe(200);
+    expect(b.body.id).toBe(a.body.id);
+  });
 
-    // Alice cannot claim her own item
-    const ownClaimRes = await request(app)
-      .post(`/api/items/${itemId}/claims`)
-      .set('Authorization', 'Bearer user_alice')
-      .send({ message: 'These are my own keys!' });
-    expect(ownClaimRes.status).toBe(403);
+  it('suggests matches of the opposite type in the same category', async () => {
+    const lost = await postItem(owner, { ...FOUND_WALLET, type: 'lost', title: 'Lost black wallet', description: 'Black wallet with my ID card inside it.' });
+    const res = await request(h.app).get(`/api/items/${lost.body.id}/matches`);
+    expect(res.status).toBe(200);
+    expect(res.body.items[0].id).toBe(itemId);
+  });
 
-    // Bob submits claim
-    const claimRes = await request(app)
-      .post(`/api/items/${itemId}/claims`)
-      .set('Authorization', 'Bearer user_bob')
-      .send({ message: 'I dropped my Hero Splendor key at the canteen around 1 PM' });
+  it('runs the request, approval and contact reveal flow', async () => {
+    const claim = await request(h.app).post(`/api/items/${itemId}/claims`).set(auth(owner)).send({ message: 'It says Civil Engineering on the card.' });
+    expect(claim.status).toBe(201);
+    expect(claim.body.contact).toBeUndefined();
+    expect((await request(h.app).get(`/api/items/${itemId}`)).body.status).toBe('claim_pending');
 
-    expect(claimRes.status).toBe(201);
-    expect(claimRes.body.id).toBeDefined();
-    expect(claimRes.body.itemId).toBe(itemId);
-    expect(claimRes.body.direction).toBe('sent');
-    expect(claimRes.body.counterpartName).toBe('Alice Person');
-    expect(claimRes.body.status).toBe('pending');
-    expect(claimRes.body.contact).toBeUndefined(); // Not revealed before approval
+    const dup = await request(h.app).post(`/api/items/${itemId}/claims`).set(auth(owner)).send({ message: 'Sending this a second time.' });
+    expect(dup.status).toBe(409);
 
-    const claimId = claimRes.body.id;
+    const forbidden = await request(h.app).post(`/api/claims/${claim.body.id}/approve`).set(auth(stranger));
+    expect(forbidden.status).toBe(403);
 
-    // Alice views incoming claims
-    const aliceClaimsRes = await request(app)
-      .get('/api/claims')
-      .set('Authorization', 'Bearer user_alice');
+    const approved = await request(h.app).post(`/api/claims/${claim.body.id}/approve`).set(auth(finder));
+    expect(approved.status).toBe(200);
+    expect(approved.body.contact).toEqual({ name: 'Aman Owner', email: 'owner@mnnit.ac.in' });
 
-    expect(aliceClaimsRes.status).toBe(200);
-    expect(aliceClaimsRes.body.claims.length).toBe(1);
-    const incomingClaim = aliceClaimsRes.body.claims[0];
-    expect(incomingClaim.id).toBe(claimId);
-    expect(incomingClaim.direction).toBe('received');
-    expect(incomingClaim.counterpartName).toBe('Bob Person');
-    expect(incomingClaim.message).toContain('Hero Splendor key');
-    expect(incomingClaim.status).toBe('pending');
-    expect(incomingClaim.contact).toBeUndefined();
+    const again = await request(h.app).post(`/api/claims/${claim.body.id}/approve`).set(auth(finder));
+    expect(again.status).toBe(409);
+    expect((await request(h.app).get(`/api/items/${itemId}`)).body.status).toBe('resolved');
 
-    // Alice approves Bob's claim
-    const approveRes = await request(app)
-      .post(`/api/claims/${claimId}/approve`)
-      .set('Authorization', 'Bearer user_alice');
+    const sent = await request(h.app).get('/api/claims').set(auth(owner));
+    expect(sent.body.claims[0]).toMatchObject({ direction: 'sent', status: 'approved', counterpartId: finder.id });
+  });
 
-    expect(approveRes.status).toBe(200);
-    expect(approveRes.body.status).toBe('approved');
-    // Once approved, contact is revealed to the listing owner
-    expect(approveRes.body.contact).toBeDefined();
-    expect(approveRes.body.contact?.name).toBe('Bob Person');
-    expect(approveRes.body.contact?.email).toBe('bob@mnnit.ac.in');
+  it('accepts one report per member per listing', async () => {
+    const body = { reason: 'spam', details: 'This listing looks like an advertisement.' };
+    const first = await request(h.app).post(`/api/items/${itemId}/report`).set(auth(stranger)).send(body);
+    const second = await request(h.app).post(`/api/items/${itemId}/report`).set(auth(stranger)).send(body);
+    expect(first.status).toBe(201);
+    expect(second.body.alreadyReported).toBe(true);
+  });
 
-    // Item status is now resolved
-    const itemRes = await request(app).get(`/api/items/${itemId}`);
-    expect(itemRes.status).toBe(200);
-    expect(itemRes.body.status).toBe(ItemStatus.RESOLVED);
+  it('toggles bookmarks', async () => {
+    const on = await request(h.app).post(`/api/items/${itemId}/save`).set(auth(stranger));
+    expect(on.body.saved).toBe(true);
+    const saved = await request(h.app).get('/api/items?saved=true').set(auth(stranger));
+    expect(saved.body.items[0].saved).toBe(true);
+    const off = await request(h.app).post(`/api/items/${itemId}/save`).set(auth(stranger));
+    expect(off.body.saved).toBe(false);
   });
 });

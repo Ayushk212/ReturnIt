@@ -3,48 +3,23 @@ import dotenv from 'dotenv';
 import { z } from 'zod';
 import { logger } from './logger.js';
 
-// Load from current working directory or monorepo root
+// Load from current working directory or monorepo root. Secrets live only in these
+// git-ignored files (or the host's environment), never in source code.
 dotenv.config();
 dotenv.config({ path: path.resolve(process.cwd(), '../../.env') });
 dotenv.config({ path: path.resolve(process.cwd(), '../.env') });
 
-const isTest = process.env.NODE_ENV === 'test';
-
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  PORT: z.coerce.number().int().positive().default(5000),
+  PORT: z.coerce.number().int().positive().default(5050),
   API_HOST: z.string().default('0.0.0.0'),
-  MONGODB_URI: z
-    .string()
-    .min(1, 'MONGODB_URI is required')
-    .default(isTest ? 'mongodb://localhost:27017/test' : 'mongodb://localhost:27017/returnit?replicaSet=rs0&directConnection=true'),
-  CORS_ORIGIN: z.string().default('http://localhost:5173'),
-  // Firebase Admin — required in production, optional in development/test
-  FIREBASE_PROJECT_ID: z.string().optional(),
-  FIREBASE_CLIENT_EMAIL: z.string().optional(),
-  FIREBASE_PRIVATE_KEY: z.string().optional(),
-  // Legacy JWT — kept for backward compat during migration; no longer used for auth
-  JWT_ACCESS_SECRET: z
-    .string()
-    .default(isTest ? 'default_test_jwt_access_secret_min_32_chars_long' : 'unused_legacy_secret_placeholder_32x'),
-  JWT_REFRESH_SECRET: z
-    .string()
-    .default(isTest ? 'default_test_jwt_refresh_secret_min_32_chars_long' : 'unused_legacy_secret_placeholder_32x'),
-  JWT_ACCESS_EXPIRY: z.string().default('15m'),
-  JWT_REFRESH_EXPIRY_DAYS: z.coerce.number().int().positive().default(7),
-  CLOUDINARY_CLOUD_NAME: z.string().optional(),
-  CLOUDINARY_API_KEY: z.string().optional(),
-  CLOUDINARY_API_SECRET: z.string().optional(),
+  DATABASE_URL: z.string().min(1, 'DATABASE_URL is required (Neon connection string)'),
+  NEON_AUTH_URL: z.string().url('NEON_AUTH_URL must be the Neon Auth base URL'),
+  /** Optional override, defaults to `${NEON_AUTH_URL}/.well-known/jwks.json`. */
+  NEON_AUTH_JWKS_URL: z.string().url().optional(),
+  CORS_ORIGIN: z.string().default('http://localhost:5185'),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(900000),
-  RATE_LIMIT_MAX_REQUESTS: z.coerce.number().int().positive().default(100),
-}).superRefine((data, ctx) => {
-  if (data.NODE_ENV === 'production' && !data.FIREBASE_PROJECT_ID) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'FIREBASE_PROJECT_ID is required in production',
-      path: ['FIREBASE_PROJECT_ID'],
-    });
-  }
+  RATE_LIMIT_MAX_REQUESTS: z.coerce.number().int().positive().default(300),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -52,9 +27,7 @@ export type Env = z.infer<typeof envSchema>;
 const parseEnv = (): Env => {
   const result = envSchema.safeParse(process.env);
   if (!result.success) {
-    const errorDetails = result.error.errors
-      .map((err) => `${err.path.join('.')}: ${err.message}`)
-      .join(', ');
+    const errorDetails = result.error.errors.map((err) => `${err.path.join('.')}: ${err.message}`).join(', ');
     logger.fatal(`Invalid environment variables: ${errorDetails}`);
     if (process.env.NODE_ENV !== 'test') {
       process.exit(1);

@@ -2,7 +2,6 @@ import crypto from 'node:crypto';
 import { Request, Response, NextFunction } from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
-import mongoSanitize from 'express-mongo-sanitize';
 import hpp from 'hpp';
 import { env } from '../config/env.js';
 
@@ -29,7 +28,7 @@ export const helmetMiddleware = helmet({
       scriptSrc: ["'self'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", 'data:', 'https://res.cloudinary.com'],
-      connectSrc: ["'self'"],
+      connectSrc: ["'self'", 'https://*.neon.tech', 'https://*.neonauth.neon.tech'],
       fontSrc: ["'self'"],
       objectSrc: ["'none'"],
       mediaSrc: ["'self'"],
@@ -39,25 +38,20 @@ export const helmetMiddleware = helmet({
   crossOriginEmbedderPolicy: false,
 });
 
-const allowedOrigins = env.CORS_ORIGIN.split(',').map((origin) => origin.trim());
+export const allowedOrigins = env.CORS_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean);
 
 export const corsMiddleware = cors({
-  origin: (origin, callback) => {
-    // Allow requests with no origin (e.g. mobile apps, curl, server-to-server) or allowed origins
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('CORS policy: Not allowed by Access-Control-Allow-Origin'));
-    }
-  },
+  // Requests without an Origin (curl, server-to-server, <img> loads) are allowed. Unknown origins
+  // simply receive no CORS headers, so the browser blocks them, rather than a 500 error.
+  origin: (origin, callback) => callback(null, !origin || allowedOrigins.includes(origin)),
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'x-request-id'],
   exposedHeaders: ['x-request-id'],
 });
 
-export const mongoSanitizeMiddleware = mongoSanitize({
-  replaceWith: '_',
-});
+export const sanitizeMiddleware = (_req: Request, _res: Response, next: NextFunction): void => {
+  next();
+};
 
 export const hppMiddleware = hpp();

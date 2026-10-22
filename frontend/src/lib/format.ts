@@ -24,6 +24,29 @@ export function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+export function formatTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' });
+}
+
+/** "Today", "Yesterday" or a date, for chat day separators. */
+export function dayLabel(iso: string): string {
+  const d = new Date(iso);
+  const today = new Date();
+  const yesterday = new Date(Date.now() - 86_400_000);
+  if (d.toDateString() === today.toDateString()) return 'Today';
+  if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  return d.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
+/** Compact time for inbox rows: time today, weekday this week, otherwise a date. */
+export function shortStamp(iso: string): string {
+  const d = new Date(iso);
+  const diffDays = (Date.now() - d.getTime()) / 86_400_000;
+  if (d.toDateString() === new Date().toDateString()) return formatTime(iso);
+  if (diffDays < 6) return d.toLocaleDateString('en-IN', { weekday: 'short' });
+  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+}
+
 export function statusLabel(status: ItemStatus): string {
   switch (status) {
     case 'open':
@@ -34,6 +57,8 @@ export function statusLabel(status: ItemStatus): string {
       return 'Resolved';
     case 'expired':
       return 'Expired';
+    case 'removed':
+      return 'Removed';
   }
 }
 

@@ -5,51 +5,156 @@
 @layer base {
   html {
     -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
   }
   body {
     @apply bg-paper font-sans text-ink antialiased;
+    text-rendering: optimizeLegibility;
   }
   h1,
   h2,
-  h3 {
-    @apply font-serif text-ink;
-    letter-spacing: -0.012em;
+  h3,
+  h4 {
+    @apply font-display text-balance;
   }
   :focus-visible {
-    outline: 2px solid #1f4d3f;
-    outline-offset: 2px;
-    border-radius: 2px;
+    outline: 2px solid theme('colors.cobalt.DEFAULT');
+    outline-offset: 3px;
+    border-radius: 6px;
+  }
+  .on-dark :focus-visible {
+    outline-color: theme('colors.lime.DEFAULT');
   }
   ::selection {
-    background: #cfe0d8;
+    background: theme('colors.lime.DEFAULT');
+    color: theme('colors.ink.DEFAULT');
+  }
+  summary::-webkit-details-marker {
+    display: none;
   }
 }
 
 @layer components {
+  .container-page {
+    @apply mx-auto w-full max-w-page px-5 sm:px-8 lg:px-10;
+  }
+
+  /* Buttons: pill-shaped, tactile press, distinct tone per surface. */
   .btn {
-    @apply inline-flex h-10 items-center justify-center gap-2 rounded-md px-4 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+    @apply relative inline-flex h-11 select-none items-center justify-center gap-2 whitespace-nowrap rounded-full px-5 text-sm font-semibold transition duration-200 ease-out active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50;
+  }
+  .btn-sm {
+    @apply h-9 px-4 text-[13px];
+  }
+  .btn-lg {
+    @apply h-[3.25rem] px-7 text-[15px];
   }
   .btn-primary {
-    @apply btn bg-accent text-white hover:bg-accent-dark;
+    @apply btn bg-cobalt text-white shadow-[0_10px_24px_-12px_rgba(47,69,255,0.9)] hover:bg-cobalt-dark;
+  }
+  .btn-ink {
+    @apply btn bg-ink text-white hover:bg-night-600;
+  }
+  .btn-lime {
+    @apply btn bg-lime text-ink shadow-[0_10px_30px_-12px_rgba(200,240,74,0.7)] hover:bg-lime-bright;
   }
   .btn-secondary {
-    @apply btn border border-line bg-surface text-ink hover:bg-paper;
+    @apply btn border border-line-strong bg-surface text-ink hover:border-ink;
   }
   .btn-ghost {
-    @apply btn text-ink hover:bg-black/5;
+    @apply btn text-ink hover:bg-ink/[0.06];
   }
+  .btn-glass {
+    @apply btn border border-white/15 bg-white/[0.06] text-white backdrop-blur-md hover:border-white/30 hover:bg-white/[0.12];
+  }
+
+  /* Form controls */
   .field {
-    @apply h-10 w-full rounded-md border border-line bg-surface px-3 text-sm text-ink placeholder:text-muted focus:border-accent;
+    @apply h-12 w-full rounded-xl border border-line bg-surface px-4 text-[15px] text-ink outline-none transition duration-200 placeholder:text-muted/70 hover:border-line-strong focus:border-cobalt focus:ring-4 focus:ring-cobalt/15;
+  }
+  .field[aria-invalid='true'] {
+    @apply border-danger focus:border-danger focus:ring-danger/15;
   }
   textarea.field {
-    @apply h-auto py-2;
+    @apply h-auto resize-y py-3 leading-relaxed;
+  }
+  select.field {
+    @apply cursor-pointer appearance-none pr-11;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23596074' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-position: right 1rem center;
+    background-repeat: no-repeat;
   }
   .label {
-    @apply mb-1.5 block text-sm font-medium text-ink;
+    @apply mb-2 flex items-center gap-2 text-sm font-semibold text-ink;
   }
-  .container-page {
-    @apply mx-auto w-full max-w-page px-4 sm:px-6 lg:px-8;
+  .hint {
+    @apply mt-1.5 text-xs text-muted;
   }
+  .optional {
+    @apply rounded-md bg-paper-deep px-1.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider text-muted;
+  }
+
+  /* Small metadata */
+  .eyebrow {
+    @apply font-mono text-eyebrow font-medium uppercase;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 font-mono text-[10.5px] font-medium uppercase leading-none tracking-[0.08em];
+  }
+
+  .card {
+    @apply rounded-card border border-line bg-surface;
+  }
+
+  .skeleton {
+    @apply animate-shimmer rounded-lg;
+    background-image: linear-gradient(90deg, #ebe8df 25%, #f7f5f0 50%, #ebe8df 75%);
+    background-size: 200% 100%;
+  }
+
+  /* Film grain for dark, cinematic surfaces. */
+  .grain::after {
+    content: '';
+    @apply pointer-events-none absolute inset-0 opacity-[0.07] mix-blend-overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* Highlighter marks behind a word. */
+  .mark-lost,
+  .mark-found {
+    @apply relative whitespace-nowrap;
+    background-repeat: no-repeat;
+    background-size: 100% 0.42em;
+    background-position: 0 88%;
+  }
+  .mark-lost {
+    background-image: linear-gradient(theme('colors.coral.DEFAULT'), theme('colors.coral.DEFAULT'));
+  }
+  .mark-found {
+    background-image: linear-gradient(theme('colors.lime.DEFAULT'), theme('colors.lime.DEFAULT'));
+  }
+
+  /* Dashed perforation, like the tear line on a claim ticket. */
+  .perforation {
+    background-image: linear-gradient(90deg, theme('colors.line.strong') 50%, transparent 50%);
+    background-size: 8px 1px;
+    background-repeat: repeat-x;
+    height: 1px;
+  }
+}
+
+@layer utilities {
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+dialog::backdrop {
+  background: rgba(7, 11, 24, 0.55);
+  backdrop-filter: blur(4px);
 }
 
 @media (prefers-reduced-motion: reduce) {

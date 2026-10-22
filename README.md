@@ -4,195 +4,146 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)](https://react.dev/)
 [![Express](https://img.shields.io/badge/Express-4.x-000000?logo=express&logoColor=white)](https://expressjs.com/)
-[![MongoDB](https://img.shields.io/badge/MongoDB-Mongoose-47A248?logo=mongodb&logoColor=white)](https://www.mongodb.com/)
-[![Firebase](https://img.shields.io/badge/Firebase-Auth-FFCA28?logo=firebase&logoColor=black)](https://firebase.google.com/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Neon-4169E1?logo=postgresql&logoColor=white)](https://neon.com/)
 
-**ReturnIt** is a secure, campus-restricted lost and found web platform designed specifically for students, faculty, and staff at **Motilal Nehru National Institute of Technology (MNNIT) Allahabad**.
-
-Built with a modern TypeScript monorepo architecture, ReturnIt provides an organized campus board, scam-resistant item claiming, mutual verification, and strict institutional identity verification.
+**ReturnIt** is a campus-restricted lost and found platform for students, faculty and staff at **Motilal Nehru National Institute of Technology (MNNIT) Allahabad**.
 
 ---
 
-## Key Features
+## Features
 
-- **Strict Campus-Only Authentication**: Sign-in is powered by Firebase Authentication with strict server-side validation requiring `email_verified: true` and an exact `@mnnit.ac.in` domain. Subdomain spoofs and lookalike domains (e.g. `mnnit.ac.in.evil.com`) are automatically rejected.
-- **Searchable Campus Board**: Real-time filtering by item type (*Lost* or *Found*), category (*Electronics*, *ID cards & documents*, *Wallets & bags*, *Keys*, *Jewellery*, *Clothing*, *Books*, *Other*), location on campus, and keyword queries.
-- **Scam-Resistant Verification**: Finders can attach private verification questions. Expected answers are hashed with SHA-256 and never leaked via public API payloads.
-- **Two-Party Claim Workflow**: Requesters submit claim notes. Listing owners can review, approve, reject, or resolve listings. Mutual contact info (name and verified campus email) is revealed only to the two parties upon claim approval.
-- **Personal Dashboard & Bookmarks**: Users can save items to their personal board, track active claims, manage their listings, and edit public profile bios.
-- **Zero-Dependency Mock Mode**: The frontend includes a comprehensive mock mode (`VITE_USE_MOCK=true`) with realistic campus seed data for instant testing without database or cloud service dependencies.
+- **Campus-only accounts** — Sign-in with Neon Auth (email and password, or Google). The API verifies every request with a short-lived JWT, accepts only verified `@mnnit.ac.in` addresses, and rejects look-alike domains such as `mnnit.ac.in.evil.com`.
+- **Email verification and password reset** — Six-digit codes sent by email; unverified accounts cannot use the API.
+- **Profiles** — First-time onboarding records programme, year, branch and section and turns them into a readable bio. Members can upload a profile photo and view each other’s public profiles. Email addresses are never shown publicly.
+- **Lost and found board** — Search, filter by type, category and location, bookmark listings, and browse a “Recently reported” feed.
+- **Photo handling** — Photos are compressed in the browser before upload, then re-encoded on the server to WebP (resized, metadata including GPS removed) with a separate thumbnail. Images are stored in PostgreSQL and served with long-lived cache headers.
+- **Requests and verification** — Finders set a private verification question (only a hash of the answer is stored). Owners approve or decline requests; contact details are shared only after approval.
+- **Direct messages** — Members can message the person who posted a listing. Conversations are stored in the database, delivered in real time over Socket.IO, and show unread counts and read receipts.
+- **Suggested matches** — Each listing shows likely counterparts (found items for a lost report, and vice versa) by category and keywords.
+- **Trust and safety** — Report listings for review, rate limiting per session, listings that expire after 90 days with an option to renew.
+- **Demo mode** — `VITE_USE_MOCK=true` runs the full interface on sample data stored in the browser, with no backend.
 
 ---
 
-## Architecture & Monorepo Structure
-
-The project is structured as an npm workspaces monorepo:
+## Repository structure
 
 ```text
 ReturnIt/
-├── frontend/                # React 18 + Vite SPA
+├── frontend/          React 18 + Vite single-page app
+│   └── src/
+│       ├── components/   UI components, 3D hero scene, page banners
+│       ├── context/      AuthContext (Neon Auth), ChatContext (real-time messages)
+│       ├── lib/          API client, demo-mode implementation, image compression
+│       └── pages/        Landing, Board, Recent, Item, Post, Messages, Profile, Welcome, Sign in
+├── backend/           Express + TypeScript API
 │   ├── src/
-│   │   ├── components/      # UI components (Navbar, ItemCard, ItemImage, EmptyState, etc.)
-│   │   ├── context/         # AuthContext (Firebase Client SDK + dev fallback)
-│   │   ├── lib/             # API client, types, constants, session management, mock data
-│   │   ├── pages/           # Landing, Dashboard, ItemDetail, PostItem, Profile, SignIn, Safety
-│   │   └── styles/          # Tailwind CSS styling and theme tokens
-│   └── tests/               # Web client smoke and validator tests
-├── backend/                 # Express + TypeScript REST API
-│   ├── src/
-│   │   ├── config/          # Environment validation, MongoDB connection, Firebase Admin SDK
-│   │   ├── middleware/      # Firebase auth token verification, rate limiting, security headers, error handler
-│   │   ├── models/          # Mongoose models (User, Item, Claim, Report)
-│   │   ├── routes/          # API route definitions (/items, /claims, /users, /auth)
-│   │   └── utils/           # Custom AppError, async handler
-│   └── tests/               # Vitest integration tests for auth, security, and API contracts
-├── shared/                  # Shared Zod schemas, TypeScript types, and enums
-├── docs/
-│   └── screenshots/         # Application preview screenshots
-├── scripts/
-│   └── dev-mongo.mjs        # In-memory single-node MongoDB replica set runner
-├── .env.example             # Documented environment variable template
-├── eslint.config.mjs        # Flat ESLint configuration
-└── package.json             # Monorepo root workspace configuration
+│   │   ├── config/       Environment, PostgreSQL pool, migrations, Neon Auth JWKS
+│   │   ├── middleware/   Authentication, rate limiting, security headers, errors
+│   │   ├── models/       SQL data access (User, Item, Claim, Conversation, Report)
+│   │   ├── routes/       /items, /claims, /conversations, /users, /auth
+│   │   └── realtime.ts   Socket.IO channel for chat
+│   └── tests/         Integration tests against an in-process PostgreSQL (PGlite)
+└── shared/            Shared enums, Zod schemas and profile helpers
 ```
 
----
-
-## Tech Stack
+## Tech stack
 
 | Layer | Technology |
 |---|---|
-| **Frontend** | React 18, Vite, TypeScript, Tailwind CSS, Lucide Icons, React Router DOM 6 |
-| **Backend** | Node.js 20+, Express, TypeScript, Mongoose 8, Firebase Admin SDK, Multer, Pino |
-| **Database** | MongoDB (Replica Set enabled for ACID transaction support) |
-| **Validation** | Zod schemas shared across client and server (`@returnit/shared`) |
-| **Testing** | Vitest, Supertest, MongoDB Memory Server |
+| **Frontend** | React 18, Vite, TypeScript, Tailwind CSS, Lucide icons, React Router 6, Motion, three.js (lazy-loaded hero scene), Socket.IO client, Neon Auth SDK |
+| **Backend** | Node.js 20+, Express, TypeScript, `pg`, `jose` (JWT verification), `sharp` (image processing), Socket.IO, Multer, Pino |
+| **Database** | PostgreSQL on Neon |
+| **Authentication** | Neon Auth (Managed Better Auth) |
+| **Testing** | Vitest, Supertest, PGlite |
 
 ---
 
-## Getting Started
+## Getting started
 
 ### Prerequisites
 
-- **Node.js** v20.x or higher
-- **npm** v10.x or higher
+- Node.js 20 or newer, npm 10 or newer
+- A Neon project with Neon Auth enabled (Google provider and email OTP verification)
 
-### 1. Installation
-
-Clone the repository and install all dependencies:
+### 1. Install
 
 ```bash
-git clone https://github.com/Ayushk212/ReturnIt.git
-cd ReturnIt
 npm install
 ```
 
-### 2. Environment Configuration
+### 2. Configure environment
 
-Copy the example environment files:
+Copy `.env.example` to `.env` (backend) and set the frontend variables in `frontend/.env`. Never commit these files; they contain your database credentials.
 
-```bash
-# Root API environment
-cp .env.example .env
+| Variable | Used by | Description |
+|---|---|---|
+| `DATABASE_URL` | API | Neon connection string |
+| `NEON_AUTH_URL` | API | Neon Auth base URL, used to verify tokens |
+| `CORS_ORIGIN` | API | Comma-separated list of allowed web origins |
+| `PORT` | API | API port (default `5050`) |
+| `VITE_API_URL` | Web | API base URL, e.g. `http://localhost:5050/api` |
+| `VITE_SOCKET_URL` | Web | Real-time server origin, e.g. `http://localhost:5050` |
+| `VITE_NEON_AUTH_URL` | Web | Neon Auth base URL |
+| `VITE_USE_MOCK` | Web | `true` for demo mode, `false` for the real API |
 
-# Frontend environment
-cp frontend/.env.example frontend/.env.local   # or create frontend/.env.local
-```
+In the Neon Console, add your production domain under **Auth → Configuration → Domains**, and enable **Require email verification**.
 
-For frontend testing with built-in mock campus data:
-```env
-# frontend/.env.local
-VITE_USE_MOCK=true
-VITE_API_URL=http://localhost:5000/api
-```
-
-For live backend integration with Firebase Auth:
-```env
-# frontend/.env.local
-VITE_USE_MOCK=false
-VITE_API_URL=http://localhost:5000/api
-VITE_FIREBASE_API_KEY=your_firebase_api_key
-VITE_FIREBASE_AUTH_DOMAIN=your_project.firebaseapp.com
-VITE_FIREBASE_PROJECT_ID=your_firebase_project_id
-VITE_FIREBASE_APP_ID=your_firebase_app_id
-```
-
-```env
-# .env (Backend)
-PORT=5000
-MONGODB_URI=mongodb://localhost:27017/returnit?replicaSet=rs0&directConnection=true
-FIREBASE_PROJECT_ID=your_firebase_project_id
-FIREBASE_CLIENT_EMAIL=your_firebase_client_email
-FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
-```
-
----
-
-## Running Locally
-
-### Development Mode
-
-You can run both frontend and backend concurrently, or run them in separate terminals:
+### 3. Create the database tables
 
 ```bash
-# Terminal 1: In-memory MongoDB replica set (if local mongod is not installed)
-npm run mongo:dev
+npm run db:migrate
+```
 
-# Terminal 2: Express Backend (runs on http://localhost:5000 with hot reload)
+Migrations are idempotent and additive, so they are safe to run on every deployment.
+
+### 4. Run
+
+```bash
+# API on http://localhost:5050
 npm run api:dev
 
-# Terminal 3: Vite Frontend (runs on http://localhost:5173 with HMR)
+# Web app on http://localhost:5185
 npm run web:dev
 ```
 
-Alternatively, start all workspace dev servers at once:
-```bash
-npm run dev
-```
-
 ---
 
-## Testing & Quality Assurance
-
-The codebase enforces strict type safety and high test coverage:
+## Quality checks
 
 ```bash
-# Run type checking across shared, api, and web packages
-npm run typecheck
-
-# Run linter across the entire monorepo
+npm run typecheck   # shared, API and web
 npm run lint
-
-# Run all automated tests (auth, items, claims contracts, validators)
-npm test
-
-# Build production bundles
+npm test            # API integration tests run against an in-process PostgreSQL; no Neon data is touched
 npm run build
 ```
 
 ---
 
-## REST API Overview
+## API overview
 
-All authenticated endpoints require an `Authorization: Bearer <Firebase_ID_Token>` header with an email verified under `@mnnit.ac.in`.
+Authenticated endpoints require `Authorization: Bearer <Neon Auth JWT>` for a verified `@mnnit.ac.in` account.
 
-| Method | Endpoint | Description | Auth Required |
+| Method | Endpoint | Description | Auth |
 |---|---|---|:---:|
-| `GET` | `/api/health` | Liveness health probe | No |
-| `GET` | `/api/ready` | Readiness probe (verifies MongoDB state) | No |
-| `GET` | `/api/auth/me` | Fetch authenticated session profile | Yes |
-| `GET` | `/api/users/:id` | Fetch public user profile and listing count | No |
-| `PATCH` | `/api/users/me` | Update bio, avatar, or contact details | Yes |
-| `GET` | `/api/items` | List listings with filter params (`type`, `category`, `q`, `location`, `status`, `mine`, `saved`) | Optional |
-| `GET` | `/api/items/:id` | Retrieve single item details | Optional |
-| `POST` | `/api/items` | Create new listing (supports multipart image uploads & `Idempotency-Key`) | Yes |
-| `POST` | `/api/items/:id/save` | Toggle bookmark on an item | Yes |
-| `POST` | `/api/items/:id/resolve` | Mark item as resolved | Yes (Owner) |
-| `POST` | `/api/items/:id/claims` | Submit claim request on a listing | Yes (Non-owner) |
-| `GET` | `/api/claims` | List incoming and outgoing claims | Yes |
-| `POST` | `/api/claims/:id/approve` | Approve claim and resolve listing | Yes (Owner) |
-| `POST` | `/api/claims/:id/reject` | Reject claim | Yes (Owner) |
-| `POST` | `/api/claims/:id/withdraw` | Withdraw submitted claim | Yes (Claimant) |
+| `GET` | `/api/health`, `/api/ready` | Liveness and database readiness | No |
+| `GET` | `/api/items` | Board (`type`, `category`, `q`, `location`, `status`), or `mine=true` / `saved=true` | Optional |
+| `GET` | `/api/items/:id` | Listing details | Optional |
+| `GET` | `/api/items/:id/photos/:n` | Listing photo (`?size=thumb` for the thumbnail) | No |
+| `GET` | `/api/items/:id/matches` | Suggested matches | Optional |
+| `POST` | `/api/items` | Create a listing (multipart, up to 5 photos, `Idempotency-Key`) | Yes |
+| `POST` | `/api/items/:id/save` · `/resolve` · `/renew` · `/report` | Bookmark, close, extend, report | Yes |
+| `POST` | `/api/items/:id/claims` | Send a request on a listing | Yes |
+| `GET` | `/api/claims` | Requests sent and received | Yes |
+| `POST` | `/api/claims/:id/approve` · `/reject` · `/withdraw` | Decide or withdraw a request | Yes |
+| `GET` | `/api/conversations` | Inbox | Yes |
+| `POST` | `/api/conversations` | Start a conversation about a listing | Yes |
+| `GET` / `POST` | `/api/conversations/:id/messages` | Read or send messages | Yes |
+| `POST` | `/api/conversations/:id/read` | Mark a conversation as read | Yes |
+| `GET` / `PATCH` / `DELETE` | `/api/users/me` | Own profile | Yes |
+| `POST` | `/api/users/me/onboarding` | First-time profile details | Yes |
+| `POST` / `DELETE` | `/api/users/me/avatar` | Upload or remove profile photo | Yes |
+| `GET` | `/api/users/me/summary` | Unread messages and pending requests | Yes |
+| `GET` | `/api/users/:id`, `/api/users/:id/listings`, `/api/users/:id/avatar` | Public profile | No |
 
 ---
 

@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
-import type { DecodedIdToken } from 'firebase-admin/auth';
-import { getFirebaseAuth } from '../config/firebase.js';
+import { query } from '../config/db.js';
+import { verifyNeonJwt } from '../config/neonAuth.js';
 import { AppError } from '../utils/AppError.js';
 import { IUser, User } from '../models/User.js';
 import { UserRole, UserStatus } from '@returnit/shared';
@@ -18,70 +18,87 @@ export function isCampusEmail(email: string): boolean {
   return /^[^\s@]+@mnnit\.ac\.in$/.test(email.trim().toLowerCase());
 }
 
+interface AuthUserRow {
+  id: string;
+  email: string;
+  name: string | null;
+  image: string | null;
+  email_verified: boolean;
+  banned: boolean | null;
+}
+
+// Short cache so a burst of requests does not hit the database for every call.
+const CACHE_MS = 30_000;
+const cache = new Map<string, { user: IUser; at: number }>();
+
+export function clearAuthCache(userId?: string): void {
+  if (userId) cache.delete(userId);
+  else cache.clear();
+}
+
+/**
+ * Resolve a bearer token to an application user:
+ * 1. verify the Neon Auth JWT signature, issuer and expiry;
+ * 2. read the authoritative identity from `neon_auth.user` (fresh verification and ban status);
+ * 3. enforce the campus domain and email verification;
+ * 4. make sure a matching row exists in the application `users` table.
+ */
+export async function resolveUserFromToken(token: string): Promise<IUser> {
+  let sub: string;
+  try {
+    sub = (await verifyNeonJwt(token)).sub;
+  } catch {
+    throw AppError.unauthorized('Your session has expired. Please sign in again.', 'TOKEN_INVALID');
+  }
+
+  const cached = cache.get(sub);
+  if (cached && Date.now() - cached.at < CACHE_MS) return cached.user;
+
+  const res = await query<AuthUserRow>(
+    `SELECT id, email, name, image, "emailVerified" AS email_verified, banned
+       FROM neon_auth.user WHERE id = $1`,
+    [sub],
+  );
+  const identity = res.rows[0];
+  if (!identity) throw AppError.unauthorized('Account not found. Please sign in again.', 'TOKEN_INVALID');
+  if (identity.banned) throw AppError.forbidden('Your account has been suspended', 'ACCOUNT_SUSPENDED');
+
+  const email = (identity.email ?? '').trim().toLowerCase();
+  if (!isCampusEmail(email)) {
+    throw AppError.forbidden('Only @mnnit.ac.in campus email addresses are allowed', 'FORBIDDEN_DOMAIN');
+  }
+  if (!identity.email_verified) {
+    throw AppError.forbidden('Please verify your email address first', 'EMAIL_UNVERIFIED');
+  }
+
+  let user = await User.findById(identity.id);
+  if (!user || user.email !== email) {
+    user = await User.upsertFromAuth({
+      id: identity.id,
+      email,
+      name: identity.name || email.split('@')[0] || 'Member',
+      avatarUrl: identity.image,
+    });
+  }
+  if (user.status === UserStatus.SUSPENDED) {
+    throw AppError.forbidden('Your account has been suspended', 'ACCOUNT_SUSPENDED');
+  }
+
+  cache.set(sub, { user, at: Date.now() });
+  return user;
+}
+
+function bearer(req: Request): string | null {
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith('Bearer ')) return null;
+  return header.slice(7).trim() || null;
+}
+
 export const authenticate = async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      throw AppError.unauthorized('Authentication token is required');
-    }
-
-    const token = authHeader.slice(7).trim();
-    if (!token) {
-      throw AppError.unauthorized('Authentication token is required');
-    }
-
-    let decoded: DecodedIdToken;
-    try {
-      decoded = await getFirebaseAuth().verifyIdToken(token, true);
-    } catch (err: unknown) {
-      const code = typeof err === 'object' && err !== null && 'code' in err ? String((err as { code: unknown }).code) : '';
-      if (code === 'auth/id-token-expired') {
-        throw AppError.unauthorized('Authentication token has expired', 'TOKEN_EXPIRED');
-      }
-      if (code === 'auth/id-token-revoked') {
-        throw AppError.unauthorized('Authentication token has been revoked', 'TOKEN_REVOKED');
-      }
-      throw AppError.unauthorized('Invalid authentication token', 'TOKEN_INVALID');
-    }
-
-    if (!decoded.email_verified) {
-      throw AppError.forbidden('Please verify your email address first', 'EMAIL_UNVERIFIED');
-    }
-
-    const email = (decoded.email ?? '').trim().toLowerCase();
-    if (!isCampusEmail(email)) {
-      throw AppError.forbidden('Only @mnnit.ac.in campus email addresses are allowed', 'FORBIDDEN_DOMAIN');
-    }
-
-    // Upsert user by firebaseUid
-    let user = await User.findOne({ firebaseUid: decoded.uid });
-    if (!user) {
-      user = await User.findOne({ email });
-      if (user) {
-        user.firebaseUid = decoded.uid;
-        if (decoded.name && (!user.name || user.name === 'Member')) {
-          user.name = decoded.name;
-        }
-        await user.save();
-      } else {
-        user = await User.create({
-          firebaseUid: decoded.uid,
-          email,
-          name: decoded.name || email.split('@')[0] || 'Member',
-          avatarUrl: decoded.picture,
-          role: UserRole.USER,
-          status: UserStatus.ACTIVE,
-          trustScore: 10,
-          savedItems: [],
-        });
-      }
-    }
-
-    if (user.status === UserStatus.SUSPENDED) {
-      throw AppError.forbidden('Your account has been suspended', 'ACCOUNT_SUSPENDED');
-    }
-
-    req.user = user;
+    const token = bearer(req);
+    if (!token) throw AppError.unauthorized('Authentication token is required');
+    req.user = await resolveUserFromToken(token);
     next();
   } catch (err) {
     next(err);
@@ -89,38 +106,19 @@ export const authenticate = async (req: Request, _res: Response, next: NextFunct
 };
 
 export const optionalAuthenticate = async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return next();
-  }
-
-  const token = authHeader.slice(7).trim();
-  if (!token) {
-    return next();
-  }
-
+  const token = bearer(req);
+  if (!token) return next();
   try {
-    const decoded = await getFirebaseAuth().verifyIdToken(token, true);
-    if (!decoded.email_verified) return next();
-
-    const email = (decoded.email ?? '').trim().toLowerCase();
-    if (!isCampusEmail(email)) return next();
-
-    const user = await User.findOne({ firebaseUid: decoded.uid });
-    if (user && user.status !== UserStatus.SUSPENDED) {
-      req.user = user;
-    }
+    req.user = await resolveUserFromToken(token);
   } catch {
-    // Silently continue for optional authentication
+    // Anonymous access continues; protected routes use `authenticate`.
   }
   next();
 };
 
 export const requireRole = (...roles: UserRole[]) => {
   return (req: Request, _res: Response, next: NextFunction): void => {
-    if (!req.user) {
-      return next(AppError.unauthorized());
-    }
+    if (!req.user) return next(AppError.unauthorized());
     if (!roles.includes(req.user.role)) {
       return next(AppError.forbidden('You do not have permission to perform this action'));
     }

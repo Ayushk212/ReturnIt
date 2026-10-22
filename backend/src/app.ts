@@ -4,10 +4,10 @@ import {
   corsMiddleware,
   helmetMiddleware,
   hppMiddleware,
-  mongoSanitizeMiddleware,
+  sanitizeMiddleware,
   requestIdMiddleware,
 } from './middleware/security.js';
-import { apiLimiter } from './middleware/rateLimit.js';
+import { apiLimiter, ipCeilingLimiter } from './middleware/rateLimit.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { AppError } from './utils/AppError.js';
 import routes from './routes/index.js';
@@ -29,7 +29,7 @@ export const createApp = (): Express => {
   app.use(express.urlencoded({ extended: true, limit: '100kb' }));
 
   // Data Sanitization & Parameter Pollution Prevention
-  app.use(mongoSanitizeMiddleware);
+  app.use(sanitizeMiddleware);
   app.use(hppMiddleware);
 
   // Health and Readiness (unthrottled)
@@ -38,7 +38,7 @@ export const createApp = (): Express => {
   });
 
   // Mount API router
-  app.use('/api', apiLimiter, routes);
+  app.use('/api', ipCeilingLimiter, apiLimiter, routes);
 
   // Handle 404 Unmatched Routes
   app.use((_req: Request, _res: Response, next: NextFunction) => {

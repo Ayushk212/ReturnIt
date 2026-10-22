@@ -18,8 +18,8 @@
     "e2e": "playwright test",
     "pretypecheck": "npm run build:shared",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "db:up": "docker compose up -d mongo",
-    "mongo:dev": "node scripts/dev-mongo.mjs",
+    "predb:migrate": "npm run build:shared",
+    "db:migrate": "npm run db:migrate -w backend",
     "api:dev": "npm run dev -w backend",
     "web:dev": "npm run dev -w frontend"
   },

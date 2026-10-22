@@ -30,14 +30,22 @@ export const errorHandler: ErrorRequestHandler = (
       field: e.path.join('.'),
       message: e.message,
     }));
-  } else if (err.name === 'CastError') {
-    statusCode = 400;
-    code = 'INVALID_ID';
-    message = 'Invalid resource identifier format';
-  } else if ('code' in err && (err as { code: unknown }).code === 11000) {
-    statusCode = 409;
-    code = 'DUPLICATE_RESOURCE';
-    message = 'A resource with this identifier already exists';
+  } else if ('code' in err && typeof (err as { code: unknown }).code === 'string') {
+    // PostgreSQL error codes: https://www.postgresql.org/docs/current/errcodes-appendix.html
+    const pgCode = (err as { code: string }).code;
+    if (pgCode === '22P02') {
+      statusCode = 400;
+      code = 'INVALID_ID';
+      message = 'Invalid resource identifier format';
+    } else if (pgCode === '23505') {
+      statusCode = 409;
+      code = 'DUPLICATE_RESOURCE';
+      message = 'This has already been submitted';
+    } else if (pgCode === '23503') {
+      statusCode = 409;
+      code = 'REFERENCE_MISSING';
+      message = 'A related record no longer exists';
+    }
   }
 
   // Log error with requestId

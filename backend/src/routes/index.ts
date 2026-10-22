@@ -1,9 +1,10 @@
 import { Router, Request, Response } from 'express';
-import mongoose from 'mongoose';
+import { isDatabaseHealthy } from '../config/db.js';
 import authRoutes from './auth.routes.js';
 import userRoutes from './user.routes.js';
 import itemRoutes from './item.routes.js';
 import claimRoutes from './claim.routes.js';
+import conversationRoutes from './conversation.routes.js';
 
 const router = Router();
 
@@ -12,9 +13,9 @@ router.get('/health', (_req: Request, res: Response) => {
   res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Readiness check (MongoDB readiness)
-router.get('/ready', (_req: Request, res: Response) => {
-  const isDbReady = mongoose.connection.readyState === 1;
+// Readiness check (PostgreSQL readiness)
+router.get('/ready', async (_req: Request, res: Response) => {
+  const isDbReady = await isDatabaseHealthy();
   if (isDbReady) {
     res.status(200).json({ status: 'ready', database: 'connected' });
   } else {
@@ -27,5 +28,6 @@ router.use('/auth', authRoutes);
 router.use('/users', userRoutes);
 router.use('/items', itemRoutes);
 router.use('/claims', claimRoutes);
+router.use('/conversations', conversationRoutes);
 
 export default router;

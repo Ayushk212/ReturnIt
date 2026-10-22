@@ -3,6 +3,8 @@ import { createApp } from './app.js';
 import { env } from './config/env.js';
 import { connectDatabase, disconnectDatabase } from './config/db.js';
 import { logger } from './config/logger.js';
+import { allowedOrigins } from './middleware/security.js';
+import { attachRealtime } from './realtime.js';
 
 const startServer = async () => {
   try {
@@ -10,6 +12,7 @@ const startServer = async () => {
 
     const app = createApp();
     const server = http.createServer(app);
+    attachRealtime(server, allowedOrigins);
 
     server.listen(env.PORT, env.API_HOST, () => {
       logger.info(`ReturnIt API running on http://${env.API_HOST}:${env.PORT} in ${env.NODE_ENV} mode`);

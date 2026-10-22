@@ -1,262 +1,284 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import {
-  GoogleAuthProvider,
-  createUserWithEmailAndPassword,
-  onAuthStateChanged,
-  sendEmailVerification,
-  sendPasswordResetEmail,
-  signInWithEmailAndPassword,
-  signInWithPopup,
-  signOut as firebaseSignOut,
-  updateProfile,
-  type User as FirebaseUser,
-} from 'firebase/auth';
-import { auth, firebaseEnabled } from '../lib/firebase';
+import { api, USE_MOCK } from '../lib/api';
+import { authClient, authErrorMessage } from '../lib/authClient';
 import { CAMPUS_EMAIL_DOMAIN, isCampusEmail } from '../lib/constants';
 import { session } from '../lib/session';
-import type { AuthUser } from '../lib/types';
+import type { AuthUser, MyProfile } from '../lib/types';
 
-const DEV_KEY = 'returnit.dev.user';
-const devMode = !firebaseEnabled && import.meta.env.DEV;
-
+const DEMO_KEY = 'returnit.demo.user';
 const DOMAIN_MESSAGE = `Please use your @${CAMPUS_EMAIL_DOMAIN} account.`;
-const UNVERIFIED_MESSAGE = 'Please verify your email address first. Check your inbox for the verification link.';
-const UNAVAILABLE_MESSAGE = 'Sign-in is not available right now. Please try again later.';
+const UNAVAILABLE_MESSAGE = 'Sign-in is not configured for this environment. Set VITE_NEON_AUTH_URL to enable it.';
+
+export type SignInResult = 'signed-in' | 'verify-email';
 
 interface AuthContextValue {
   user: AuthUser | null;
+  /** Application profile (academic details, photo, onboarding state). */
+  profile: MyProfile | null;
   loading: boolean;
   available: boolean;
-  devMode: boolean;
-  signInWithGoogle: () => Promise<void>;
-  signInWithEmail: (email: string, password: string) => Promise<void>;
-  register: (name: string, email: string, password: string) => Promise<void>;
-  resendVerification: (email: string, password: string) => Promise<void>;
-  resetPassword: (email: string) => Promise<void>;
+  /** Local demo sign-in for VITE_USE_MOCK builds; never used with the real API. */
+  demoMode: boolean;
+  /** Email address that signed in but still needs to confirm its verification code. */
+  pendingVerification: string | null;
+  /** Problems detected outside a form submission, e.g. a non-campus Google account. */
+  authError: string | null;
+  clearAuthError: () => void;
+  refreshProfile: () => Promise<void>;
+  setProfile: (p: MyProfile) => void;
+  signInWithGoogle: (returnTo: string) => Promise<void>;
+  signInWithEmail: (email: string, password: string) => Promise<SignInResult>;
+  register: (name: string, email: string, password: string) => Promise<SignInResult>;
+  sendVerificationCode: (email: string) => Promise<void>;
+  verifyEmail: (email: string, code: string) => Promise<void>;
+  requestPasswordReset: (email: string) => Promise<void>;
+  resetPassword: (email: string, code: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-function toAuthUser(fb: FirebaseUser): AuthUser {
-  const email = fb.email ?? '';
-  return {
-    uid: fb.uid,
-    name: fb.displayName?.trim() || email.split('@')[0] || 'Member',
-    email,
-    photoURL: fb.photoURL ?? undefined,
-  };
+interface SessionUser {
+  id: string;
+  email: string;
+  name?: string | null;
+  image?: string | null;
+  emailVerified?: boolean;
 }
 
-function messageFor(e: unknown): string {
-  const code = typeof e === 'object' && e !== null && 'code' in e ? String((e as { code: unknown }).code) : '';
-  switch (code) {
-    case 'auth/invalid-credential':
-    case 'auth/wrong-password':
-    case 'auth/user-not-found':
-    case 'auth/invalid-email':
-      return 'Incorrect email or password.';
-    case 'auth/email-already-in-use':
-      return 'An account with this email already exists. Try signing in instead.';
-    case 'auth/weak-password':
-      return 'Choose a stronger password (at least 10 characters).';
-    case 'auth/too-many-requests':
-      return 'Too many attempts. Please wait a few minutes and try again.';
-    case 'auth/popup-closed-by-user':
-    case 'auth/cancelled-popup-request':
-      return 'Sign-in was cancelled.';
-    case 'auth/popup-blocked':
-      return 'Your browser blocked the sign-in window. Allow pop-ups and try again.';
-    case 'auth/network-request-failed':
-      return 'Network error. Check your connection and try again.';
-    default:
-      return e instanceof Error && !code ? e.message : 'Sign-in failed. Please try again.';
-  }
+function toAuthUser(u: SessionUser): AuthUser {
+  const email = u.email.trim().toLowerCase();
+  return { uid: u.id, email, name: u.name?.trim() || email.split('@')[0] || 'Member', photoURL: u.image ?? undefined };
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [profile, setProfile] = useState<MyProfile | null>(null);
   const [loading, setLoading] = useState(true);
-  // While true, an explicit flow (register / email sign-in) applies the result itself.
-  const handlingFlow = useRef(false);
+  const [pendingVerification, setPendingVerification] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const mounted = useRef(true);
 
-  const apply = useCallback((next: AuthUser | null) => {
+  const applyUser = useCallback((next: AuthUser | null) => {
     session.user = next;
     setUser(next);
-    setLoading(false);
+    if (!next) setProfile(null);
   }, []);
 
-  useEffect(() => {
-    session.getToken = async () => (auth?.currentUser ? auth.currentUser.getIdToken() : null);
-
-    if (auth) {
-      return onAuthStateChanged(auth, async (fb) => {
-        if (handlingFlow.current) return;
-        if (!fb) {
-          apply(null);
-          return;
-        }
-        // Server-side checks must repeat this. The client check is a convenience, not security.
-        if (!isCampusEmail(fb.email ?? '') || !fb.emailVerified) {
-          await firebaseSignOut(auth!);
-          apply(null);
-          return;
-        }
-        apply(toAuthUser(fb));
-      });
+  const refreshProfile = useCallback(async () => {
+    if (!session.user) return;
+    try {
+      const p = await api.getMe();
+      if (mounted.current) setProfile(p);
+    } catch (e) {
+      // A rejected token means the session is no longer valid for the API.
+      if (e instanceof Error && 'status' in e && (e as { status: number }).status === 401) applyUser(null);
     }
+  }, [applyUser]);
 
-    if (devMode) {
-      try {
-        const raw = localStorage.getItem(DEV_KEY);
-        if (raw) apply(JSON.parse(raw) as AuthUser);
-      } catch {
-        /* ignore corrupted dev session */
+  /** Reads the Neon session (this also completes a Google redirect) and applies campus rules. */
+  const syncSession = useCallback(
+    async (force = false) => {
+      if (!authClient) return;
+      const res = await authClient.getSession(force ? { fetchOptions: { headers: { 'X-Force-Fetch': 'true' } } } : undefined);
+      const sessionUser = res.data?.user as SessionUser | undefined;
+      if (!sessionUser) {
+        applyUser(null);
+        return;
       }
-    }
-    setLoading(false);
-    return undefined;
-  }, [apply]);
+      if (!isCampusEmail(sessionUser.email)) {
+        await authClient.signOut();
+        applyUser(null);
+        setAuthError(`${sessionUser.email} is not a campus account. ${DOMAIN_MESSAGE}`);
+        return;
+      }
+      if (!sessionUser.emailVerified) {
+        applyUser(null);
+        setPendingVerification(sessionUser.email.toLowerCase());
+        return;
+      }
+      setPendingVerification(null);
+      applyUser(toAuthUser(sessionUser));
+    },
+    [applyUser],
+  );
 
-  const devSignIn = useCallback(
-    (email: string, name?: string) => {
-      const clean = email.trim().toLowerCase();
-      const next: AuthUser = { uid: `dev-${clean}`, name: name?.trim() || clean.split('@')[0] || 'Member', email: clean };
+  useEffect(() => {
+    mounted.current = true;
+    if (USE_MOCK) {
+      session.getToken = async () => null;
       try {
-        localStorage.setItem(DEV_KEY, JSON.stringify(next));
+        const raw = localStorage.getItem(DEMO_KEY);
+        if (raw) applyUser(JSON.parse(raw) as AuthUser);
+      } catch {
+        /* ignore a corrupted demo session */
+      }
+      setLoading(false);
+      return () => {
+        mounted.current = false;
+      };
+    }
+
+    session.getToken = async (forceRefresh = false) => {
+      if (!authClient) return null;
+      const res = await authClient.getSession(forceRefresh ? { fetchOptions: { headers: { 'X-Force-Fetch': 'true' } } } : undefined);
+      return res.data?.session?.token ?? null;
+    };
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('error')) setAuthError('Google sign-in did not complete. Please try again.');
+
+    syncSession()
+      .catch(() => applyUser(null))
+      .finally(() => mounted.current && setLoading(false));
+
+    // Re-check when the tab regains focus (sign-out in another tab, expired sessions).
+    const onFocus = () => void syncSession().catch(() => undefined);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      mounted.current = false;
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [applyUser, syncSession]);
+
+  useEffect(() => {
+    if (user) void refreshProfile();
+  }, [user, refreshProfile]);
+
+  const requireClient = () => {
+    if (!authClient) throw new Error(UNAVAILABLE_MESSAGE);
+    return authClient;
+  };
+
+  const demoSignIn = useCallback(
+    (email: string, name?: string): SignInResult => {
+      const clean = email.trim().toLowerCase();
+      const next: AuthUser = { uid: `demo-${clean}`, email: clean, name: name?.trim() || clean.split('@')[0] || 'Member' };
+      try {
+        localStorage.setItem(DEMO_KEY, JSON.stringify(next));
       } catch {
         /* ignore */
       }
-      apply(next);
+      applyUser(next);
+      return 'signed-in';
     },
-    [apply],
+    [applyUser],
   );
 
-  const signInWithGoogle = useCallback(async () => {
-    if (!auth) throw new Error(devMode ? 'Google sign-in needs Firebase. Use the email form in development mode.' : UNAVAILABLE_MESSAGE);
-    const provider = new GoogleAuthProvider();
-    provider.setCustomParameters({ hd: CAMPUS_EMAIL_DOMAIN, prompt: 'select_account' });
-    try {
-      const credential = await signInWithPopup(auth, provider);
-      if (!isCampusEmail(credential.user.email ?? '')) {
-        await firebaseSignOut(auth);
-        throw new Error(DOMAIN_MESSAGE);
-      }
-    } catch (e) {
-      throw new Error(messageFor(e));
-    }
+  const signInWithGoogle = useCallback(async (returnTo: string) => {
+    if (USE_MOCK) throw new Error('Google sign-in is not available in demo mode. Use the email form instead.');
+    const client = requireClient();
+    const origin = window.location.origin;
+    const target = returnTo.startsWith('/') && !returnTo.startsWith('//') ? returnTo : '/dashboard';
+    const res = await client.signIn.social({
+      provider: 'google',
+      callbackURL: `${origin}${target}`,
+      errorCallbackURL: `${origin}/signin?error=oauth`,
+    });
+    if (res.error) throw new Error(authErrorMessage(res.error, 'Google sign-in could not start. Please try again.'));
+    // On success the browser is redirected to Google; the session is completed on return.
   }, []);
 
   const signInWithEmail = useCallback(
-    async (email: string, password: string) => {
-      if (!isCampusEmail(email)) throw new Error(DOMAIN_MESSAGE);
-      if (!auth) {
-        if (!devMode) throw new Error(UNAVAILABLE_MESSAGE);
-        devSignIn(email);
-        return;
-      }
-      handlingFlow.current = true;
-      try {
-        const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
-        if (!credential.user.emailVerified) {
-          await firebaseSignOut(auth);
-          throw new Error(UNVERIFIED_MESSAGE);
+    async (email: string, password: string): Promise<SignInResult> => {
+      const clean = email.trim().toLowerCase();
+      if (!isCampusEmail(clean)) throw new Error(DOMAIN_MESSAGE);
+      if (USE_MOCK) return demoSignIn(clean);
+      const res = await requireClient().signIn.email({ email: clean, password });
+      if (res.error) {
+        if ((res.error.code ?? '').toUpperCase() === 'EMAIL_NOT_VERIFIED') {
+          setPendingVerification(clean);
+          return 'verify-email';
         }
-        apply(toAuthUser(credential.user));
-      } catch (e) {
-        throw new Error(messageFor(e));
-      } finally {
-        handlingFlow.current = false;
+        throw new Error(authErrorMessage(res.error, 'Sign-in failed. Please try again.'));
       }
+      await syncSession(true);
+      return session.user ? 'signed-in' : 'verify-email';
     },
-    [apply, devSignIn],
+    [demoSignIn, syncSession],
   );
+
+  const sendVerificationCode = useCallback(async (email: string) => {
+    if (USE_MOCK) return;
+    const res = await requireClient().emailOtp.sendVerificationOtp({ email: email.trim().toLowerCase(), type: 'email-verification' });
+    if (res.error) throw new Error(authErrorMessage(res.error, 'Could not send the code. Please try again.'));
+  }, []);
 
   const register = useCallback(
-    async (name: string, email: string, password: string) => {
-      if (!isCampusEmail(email)) throw new Error(DOMAIN_MESSAGE);
-      if (!auth) {
-        if (!devMode) throw new Error(UNAVAILABLE_MESSAGE);
-        devSignIn(email, name);
-        return;
-      }
-      handlingFlow.current = true;
-      try {
-        const credential = await createUserWithEmailAndPassword(auth, email.trim(), password);
-        await updateProfile(credential.user, { displayName: name.trim() });
-        await sendEmailVerification(credential.user);
-        await firebaseSignOut(auth);
-      } catch (e) {
-        throw new Error(messageFor(e));
-      } finally {
-        handlingFlow.current = false;
-        apply(null);
-      }
+    async (name: string, email: string, password: string): Promise<SignInResult> => {
+      const clean = email.trim().toLowerCase();
+      if (!isCampusEmail(clean)) throw new Error(DOMAIN_MESSAGE);
+      if (password.length < 10) throw new Error('Choose a password of at least 10 characters.');
+      if (USE_MOCK) return demoSignIn(clean, name);
+      const res = await requireClient().signUp.email({ email: clean, password, name: name.trim() });
+      if (res.error) throw new Error(authErrorMessage(res.error, 'Could not create your account. Please try again.'));
+      setPendingVerification(clean);
+      await sendVerificationCode(clean);
+      return 'verify-email';
     },
-    [apply, devSignIn],
+    [demoSignIn, sendVerificationCode],
   );
 
-  const resendVerification = useCallback(
-    async (email: string, password: string) => {
-      if (!isCampusEmail(email)) throw new Error(DOMAIN_MESSAGE);
-      if (!auth) throw new Error(UNAVAILABLE_MESSAGE);
-      handlingFlow.current = true;
-      try {
-        const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
-        if (!credential.user.emailVerified) await sendEmailVerification(credential.user);
-        await firebaseSignOut(auth);
-      } catch (e) {
-        throw new Error(messageFor(e));
-      } finally {
-        handlingFlow.current = false;
-        apply(null);
-      }
+  const verifyEmail = useCallback(
+    async (email: string, code: string) => {
+      const res = await requireClient().emailOtp.verifyEmail({ email: email.trim().toLowerCase(), otp: code.trim() });
+      if (res.error) throw new Error(authErrorMessage(res.error, 'That code could not be verified.'));
+      await syncSession(true);
+      if (!session.user) throw new Error('Your email is verified. Please sign in to continue.');
     },
-    [apply],
+    [syncSession],
   );
 
-  const resetPassword = useCallback(async (email: string) => {
-    if (!isCampusEmail(email)) throw new Error(DOMAIN_MESSAGE);
-    if (!auth) {
-      if (devMode) return;
-      throw new Error(UNAVAILABLE_MESSAGE);
-    }
-    try {
-      await sendPasswordResetEmail(auth, email.trim());
-    } catch (e) {
-      const code = typeof e === 'object' && e !== null && 'code' in e ? String((e as { code: unknown }).code) : '';
-      if (code === 'auth/user-not-found') return; // do not reveal which addresses are registered
-      throw new Error(messageFor(e));
-    }
+  const requestPasswordReset = useCallback(async (email: string) => {
+    const clean = email.trim().toLowerCase();
+    if (!isCampusEmail(clean)) throw new Error(DOMAIN_MESSAGE);
+    if (USE_MOCK) return;
+    const res = await requireClient().emailOtp.requestPasswordReset({ email: clean });
+    if (res.error) throw new Error(authErrorMessage(res.error, 'Could not send the reset code. Please try again.'));
+  }, []);
+
+  const resetPassword = useCallback(async (email: string, code: string, password: string) => {
+    if (password.length < 10) throw new Error('Choose a password of at least 10 characters.');
+    const res = await requireClient().emailOtp.resetPassword({ email: email.trim().toLowerCase(), otp: code.trim(), password });
+    if (res.error) throw new Error(authErrorMessage(res.error, 'Could not reset your password.'));
   }, []);
 
   const signOut = useCallback(async () => {
-    if (auth) {
-      await firebaseSignOut(auth);
-      return;
+    if (USE_MOCK) {
+      try {
+        localStorage.removeItem(DEMO_KEY);
+      } catch {
+        /* ignore */
+      }
+    } else if (authClient) {
+      await authClient.signOut().catch(() => undefined);
     }
-    try {
-      localStorage.removeItem(DEV_KEY);
-    } catch {
-      /* ignore */
-    }
-    apply(null);
-  }, [apply]);
+    setPendingVerification(null);
+    applyUser(null);
+  }, [applyUser]);
 
   const value = useMemo<AuthContextValue>(
     () => ({
       user,
+      profile,
       loading,
-      available: firebaseEnabled || devMode,
-      devMode,
+      available: USE_MOCK || Boolean(authClient),
+      demoMode: USE_MOCK,
+      pendingVerification,
+      authError,
+      clearAuthError: () => setAuthError(null),
+      refreshProfile,
+      setProfile,
       signInWithGoogle,
       signInWithEmail,
       register,
-      resendVerification,
+      sendVerificationCode,
+      verifyEmail,
+      requestPasswordReset,
       resetPassword,
       signOut,
     }),
-    [user, loading, signInWithGoogle, signInWithEmail, register, resendVerification, resetPassword, signOut],
+    [user, profile, loading, pendingVerification, authError, refreshProfile, signInWithGoogle, signInWithEmail, register, sendVerificationCode, verifyEmail, requestPasswordReset, resetPassword, signOut],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
