@@ -39,6 +39,11 @@ export function authErrorMessage(err: AuthErrorLike | null | undefined, fallback
       return 'Too many attempts. Request a new code.';
     case 'EMAIL_NOT_VERIFIED':
       return 'Please verify your email address to continue.';
+    case 'INVALID_ORIGIN':
+      return 'This domain is not authorized in Neon Auth. Add your frontend URL to Neon Console → Auth → Allowed Origins.';
+  }
+  if (err?.status === 403 || err?.message === 'HTTP 403' || err?.message?.includes('Invalid origin')) {
+    return 'This domain is not authorized in Neon Auth. Add your frontend URL to Neon Console → Auth → Allowed Origins.';
   }
   if (err?.status === 429) return 'Too many attempts. Please wait a few minutes and try again.';
   return err?.message && !/^HTTP \d+/.test(err.message) ? err.message : fallback;

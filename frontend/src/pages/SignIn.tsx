@@ -82,7 +82,12 @@ export default function SignIn() {
     try {
       await fn();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Something went wrong. Please try again.');
+      const msg = e instanceof Error ? e.message : '';
+      if (msg === 'HTTP 403' || msg.includes('403') || msg.toLowerCase().includes('invalid origin')) {
+        setError('This domain is not authorized in Neon Auth. Add your frontend URL to Neon Console → Auth → Allowed Origins.');
+      } else {
+        setError(msg || 'Something went wrong. Please try again.');
+      }
     } finally {
       setBusy(false);
     }
