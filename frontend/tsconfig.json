@@ -10,7 +10,11 @@
     "noEmit": true,
     "isolatedModules": true,
     "resolveJsonModule": true,
-    "esModuleInterop": true
+    "esModuleInterop": true,
+    "baseUrl": ".",
+    "paths": {
+      "@returnit/shared": ["../shared/src/index.ts"]
+    }
   },
   "include": ["src"]
 }

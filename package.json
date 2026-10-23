@@ -10,6 +10,7 @@
   ],
   "scripts": {
     "dev": "npm run dev --workspaces --if-present",
+    "prebuild": "npm run build:shared",
     "build:shared": "npm run build -w shared",
     "build": "npm run build --workspaces --if-present",
     "lint": "eslint .",
