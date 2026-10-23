@@ -10,7 +10,7 @@ export function isUuid(value: unknown): value is string {
 
 /** Route-param guard: non-UUID ids become a clean 404 instead of a database cast error. */
 export function uuidParam(name: string, label = 'resource'): RequestHandler {
-  return (req, _res, next) => {
+  return (req: Request, _res: Response, next: NextFunction) => {
     if (!isUuid(req.params[name])) return next(AppError.notFound(`This ${label} no longer exists`));
     next();
   };
@@ -31,7 +31,7 @@ export function photoUpload(field: string, maxFiles: number, maxBytes = 8 * 1024
   const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: maxBytes, files: maxFiles },
-    fileFilter: (_req, file, cb) => {
+    fileFilter: (_req: unknown, file: { mimetype: string }, cb: (error: Error | null, acceptFile?: boolean) => void) => {
       if (!ALLOWED_MIME.includes(file.mimetype)) {
         return cb(AppError.badRequest('Only JPG, PNG and WebP images are allowed', 'INVALID_FILE_TYPE'));
       }
@@ -42,11 +42,12 @@ export function photoUpload(field: string, maxFiles: number, maxBytes = 8 * 1024
   return (req: Request, res: Response, next: NextFunction) => {
     handler(req, res, (err: unknown) => {
       if (!err) return next();
-      if (err instanceof multer.MulterError) {
-        if (err.code === 'LIMIT_FILE_SIZE') {
+      if (err instanceof multer.MulterError || (typeof err === 'object' && err !== null && 'code' in err)) {
+        const multerErr = err as { code: string };
+        if (multerErr.code === 'LIMIT_FILE_SIZE') {
           return next(AppError.badRequest(`Each photo must be smaller than ${Math.round(maxBytes / 1024 / 1024)} MB`, 'FILE_TOO_LARGE'));
         }
-        if (err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE') {
+        if (multerErr.code === 'LIMIT_FILE_COUNT' || multerErr.code === 'LIMIT_UNEXPECTED_FILE') {
           return next(AppError.badRequest(`You can upload up to ${maxFiles} photo${maxFiles === 1 ? '' : 's'}`, 'TOO_MANY_FILES'));
         }
       }
